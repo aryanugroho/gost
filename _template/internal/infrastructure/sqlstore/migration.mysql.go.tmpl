@@ -1,0 +1,99 @@
+package sqlstore
+
+import (
+	"database/sql"
+	"errors"
+	"fmt"
+	"os"
+	"time"
+
+	"[base_project]/config"
+	"[base_project]/pkg/db"
+
+	"github.com/golang-migrate/migrate/v4"
+	"github.com/golang-migrate/migrate/v4/database"
+	"github.com/golang-migrate/migrate/v4/database/mysql"
+	_ "github.com/golang-migrate/migrate/v4/source/file"
+)
+
+const migrationDir = "internal/infrastructure/sqlstore/migration"
+
+type Migrator struct {
+	migrator *migrate.Migrate
+}
+
+func openDBWrapper(dbConfig db.Config) (database.Driver, error) {
+	masterDsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s",
+		dbConfig.User,
+		dbConfig.Password,
+		dbConfig.Host,
+		dbConfig.Port,
+		dbConfig.Name,
+	)
+	sqlDB, err := sql.Open(dbConfig.Driver, masterDsn)
+	if err != nil {
+		return nil, err
+	}
+	driver, err := mysql.WithInstance(sqlDB, &mysql.Config{})
+	return driver, err
+}
+
+func NewMigrator() (*Migrator, error) {
+	config := *config.All()
+	driver, err := openDBWrapper(config.Database.Master)
+	if err != nil {
+		return nil, err
+	}
+
+	migrator, err := migrate.NewWithDatabaseInstance(fmt.Sprintf("file://%s", migrationDir), "mysql", driver)
+
+	return &Migrator{
+		migrator: migrator,
+	}, err
+}
+
+// Migrate executes all migrations exists
+func (m *Migrator) MigrateAll() error {
+
+	if err := m.migrator.Up(); err != nil {
+		if !errors.Is(err, migrate.ErrNoChange) {
+			return err
+		}
+
+		fmt.Println("No migration performed, current schema is already the latest")
+	}
+
+	fmt.Println("Migration run successfully")
+	return nil
+}
+
+// Rollback migration(s) that start from the last till N step backward.
+func (m *Migrator) Rollback(step int) error {
+	err := m.migrator.Steps(step * -1)
+	if err != nil {
+		fmt.Println("Rollback failed")
+		return err
+	}
+	fmt.Println("Rollback successful")
+	return nil
+}
+
+func (m *Migrator) Create(name string) (err error) {
+	timestamp := time.Now().Unix()
+
+	fileNameUp := fmt.Sprintf("%s/%d_%s.up.sql", migrationDir, timestamp, name)
+	fileNameDown := fmt.Sprintf("%s/%d_%s.down.sql", migrationDir, timestamp, name)
+
+	if _, err := os.Create(fileNameUp); err != nil {
+		return err
+	}
+
+	if _, err := os.Create(fileNameDown); err != nil {
+		_ = os.Remove(fileNameUp)
+		return err
+	}
+
+	fmt.Printf("New migration created successfully.\n")
+
+	return nil
+}

@@ -1,0 +1,40 @@
+package api1
+
+import (
+	"net/http"
+
+	"[base_project]/internal/usecase"
+	"[base_project]/pkg/helpers/errors"
+	"[base_project]/pkg/helpers/validation"
+	"[base_project]/pkg/httpapi/server"
+)
+
+func (api *API) InitAPI() {
+	api.BaseRoutes.[Entity] = api.BaseRoutes.ApiRoot.PathPrefix("/[entity]").Subrouter()
+
+	api.BaseRoutes.[Entity].Handle("/", http.HandlerFunc(api.create[Entity])).Methods("POST")
+	api.docs.AddOperation(usecase.[Entity]Payload{}, usecase.[Entity]Payload{}, "/api/v1/create", http.MethodPut, "Create something")
+}
+
+func (api *API) create[Entity](w http.ResponseWriter, r *http.Request) {
+	dto := usecase.[Entity]Payload{}
+	err := server.ReadJSON(r, &dto)
+	if err != nil {
+		server.WriteResponseError(w, r, errors.BadRequest.New(err.Error()))
+		return
+	}
+
+	err = validation.Validate.Struct(dto)
+	if err != nil {
+		server.WriteResponseError(w, r, errors.BadRequest.New(err.Error()))
+		return
+	}
+
+	result, err := api.usecase.Create[Entity](r.Context(), &dto)
+	if err != nil {
+		server.WriteResponseError(w, r, err)
+		return
+	}
+
+	server.WriteJSON(w, r, http.StatusOK, result)
+}

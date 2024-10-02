@@ -1,0 +1,42 @@
+package usecase
+
+import (
+	"context"
+	"errors"
+
+	"[base_project]/internal/model"
+)
+
+type [Entity]Payload struct {
+	UUID    string `json:"uuid"`
+}
+
+type [Entity] struct {
+	ID      string `json:"id"`
+	UUID    string `json:"uuid"`
+	model.AuditableEntity
+}
+
+
+func (u *App) Create[Entity](ctx context.Context, payload *[Entity]Payload) (*[Entity], error) {
+	ctx = u.Infrastructure.SQLStore().BeginTx(ctx)
+	defer u.Infrastructure.SQLStore().RollbackTx(ctx)
+
+	[entity], err := u.Infrastructure.SQLStore().[Entity]Store().Create(ctx, &model.[Entity]{
+		UUID:    payload.UUID,
+	})
+	if err != nil {
+		return nil, errors.New("failed to create post")
+	}
+
+	err = u.Infrastructure.SQLStore().CommitTx(ctx)
+	if err != nil {
+		return nil, errors.New("failed to create post")
+	}
+
+	return &[Entity]{
+		ID:              [entity].ID,
+		UUID:            [entity].UUID,
+		AuditableEntity: [entity].AuditableEntity,
+	}, nil
+}

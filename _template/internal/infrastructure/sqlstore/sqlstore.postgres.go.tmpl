@@ -1,0 +1,134 @@
+package sqlstore
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"time"
+
+	"[base_project]/pkg/contextprop"
+	"[base_project]/pkg/db"
+	"[base_project]/pkg/logger"
+	"[base_project]/internal/model"
+
+	"github.com/jmoiron/sqlx"
+)
+
+const (
+	Tx contextprop.ContextKey = "tx"
+)
+
+// Store is the wrapper for dto.
+type Store interface {
+	BeginTx(ctx context.Context) context.Context
+	CommitTx(ctx context.Context) error
+	RollbackTx(ctx context.Context) error
+
+	[Entity]Store() model.[Entity]SQLStore
+}
+
+type SQLStore struct {
+	db                *db.SqlxDBWrapper
+	driver            string
+	connectionTimeout time.Duration
+
+	[entity]    model.[Entity]SQLStore
+}
+
+func NewSQLStore(ctx context.Context, dbConfigMaster, dbConfigSlave db.Config) (Store, error) {
+	connectionTimeout := 3 * time.Second
+
+	logger.Info(ctx,
+		fmt.Sprintf("database configs master, max open %d, max idle %d, max lifetime %d",
+			dbConfigMaster.MaxOpen, dbConfigMaster.MaxIdle, dbConfigMaster.MaxLifetime))
+
+	logger.Info(ctx,
+		fmt.Sprintf("database configs slave, max open %d, max idle %d, max lifetime %d",
+			dbConfigSlave.MaxOpen, dbConfigSlave.MaxIdle, dbConfigSlave.MaxLifetime))
+
+	configMaster := db.Config{
+		Host:        dbConfigMaster.Host,
+		Port:        dbConfigMaster.Port,
+		User:        dbConfigMaster.User,
+		Password:    dbConfigMaster.Password,
+		Name:        dbConfigMaster.Name,
+		MaxOpen:     int(dbConfigMaster.MaxOpen),
+		MaxIdle:     int(dbConfigMaster.MaxIdle),
+		MaxLifetime: int(dbConfigMaster.MaxLifetime),
+		MaxIdleTime: int(dbConfigMaster.MaxIdleTime),
+		// CA:          dbCa,
+		ServerName: dbConfigMaster.ServerName,
+		Location:   dbConfigMaster.Location,
+		ParseTime:  true,
+	}
+
+	dbMaster, err := db.PostgresDB(configMaster, connectionTimeout)
+	if err != nil {
+		logger.Error(ctx, "failed to connect to database", err)
+		return nil, err
+	}
+
+	configSlave := db.Config{
+		Host:        dbConfigSlave.Host,
+		Port:        dbConfigSlave.Port,
+		User:        dbConfigSlave.User,
+		Password:    dbConfigSlave.Password,
+		Name:        dbConfigSlave.Name,
+		MaxOpen:     dbConfigSlave.MaxOpen,
+		MaxIdle:     dbConfigSlave.MaxIdle,
+		MaxLifetime: dbConfigSlave.MaxLifetime,
+		MaxIdleTime: dbConfigSlave.MaxIdleTime,
+		// CA:          dbCa,
+		ServerName: dbConfigSlave.ServerName,
+		Location:   dbConfigSlave.Location,
+		ParseTime:  true,
+	}
+	dbSlave, err := db.PostgresDB(configSlave, connectionTimeout)
+	if err != nil {
+		logger.Error(ctx, "failed to connect to database", err)
+		return nil, err
+	}
+
+	dbxMaster := sqlx.NewDb(dbMaster, "postgres")
+	dbxSlave := sqlx.NewDb(dbSlave, "postgres")
+
+	masterWrapper := db.NewSqlxDBWrapper(dbxMaster, dbConfigMaster.Driver, connectionTimeout)
+	slaveWrapper := db.NewSqlxDBWrapper(dbxSlave, dbConfigSlave.Driver, connectionTimeout)
+
+	return &SQLStore{
+		db:                masterWrapper,
+		driver:            dbConfigMaster.Driver,
+		connectionTimeout: connectionTimeout,
+		[entity]:    New[Entity]Store(masterWrapper, slaveWrapper),
+	}, nil
+}
+
+func (s *SQLStore) BeginTx(ctx context.Context) context.Context {
+	tx, _ := s.db.Begin()
+	ctx = context.WithValue(ctx, Tx, tx)
+	return ctx
+}
+
+func (s *SQLStore) CommitTx(ctx context.Context) error {
+	tx, ok := ctx.Value(Tx).(*sql.Tx)
+	if !ok {
+		return errors.New("failed to commit on non transaction mode")
+	}
+
+	return tx.Commit()
+}
+
+func (s *SQLStore) RollbackTx(ctx context.Context) error {
+	tx, ok := ctx.Value(Tx).(*sql.Tx)
+	if !ok {
+		return errors.New("failed to rollback on non transaction mode")
+	}
+	tx.Rollback()
+	return nil
+}
+
+func (s *SQLStore) [Entity]Store() model.[Entity]SQLStore {
+	return s.[entity]
+}
+

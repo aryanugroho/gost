@@ -1,0 +1,110 @@
+package sqlstore
+
+import (
+	"context"
+
+	"[base_project]/pkg/db"
+	"[base_project]/internal/model"
+)
+
+// implementation of model store
+type [Entity]Store struct {
+	master *db.SqlxDBWrapper
+	slave  *db.SqlxDBWrapper
+}
+
+func New[Entity]Store(master *db.SqlxDBWrapper, slave *db.SqlxDBWrapper) *[Entity]Store {
+	return &[Entity]Store{
+		master: master,
+		slave:  slave,
+	}
+}
+
+var (
+	create[Entity]SQL  = `INSERT INTO [Entity]s (uuid, created_at, updated_at) VALUES (?, ?, ?)`
+	update[Entity]SQL  = `UPDATE [Entity]s SET uuid = ?, updated_at = ? WHERE id = ?`
+	delete[Entity]SQL  = `DELETE FROM [Entity]s WHERE id = ?`
+	find[Entity]SQL    = `SELECT uuid, created_at, updated_at FROM [Entity]s WHERE id = ?`
+	findAll[Entity]SQL = `SELECT uuid, created_at, updated_at FROM [Entity]s ORDER BY created_at DESC`
+)
+
+func (u *[Entity]Store) Create(ctx context.Context, model *model.[Entity]) (*model.[Entity], error) {
+	dbs := u.master
+	tx, ok := ctx.Value(Tx).(*db.SqlxDBWrapper)
+	if ok {
+		dbs = tx
+	}
+
+	_, err := dbs.ExecContext(ctx, create[Entity]SQL, model.UUID, model.CreatedAt, model.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+
+	return model, nil
+}
+
+func (u *[Entity]Store) Update(ctx context.Context, model *model.[Entity]) (*model.[Entity], error) {
+	dbs := u.master
+	tx, ok := ctx.Value(Tx).(*db.SqlxDBWrapper)
+	if ok {
+		dbs = tx
+	}
+
+	_, err := dbs.ExecContext(ctx, update[Entity]SQL, model.UUID,model.UpdatedAt, model.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	return model, nil
+}
+
+func (u *[Entity]Store) Delete(ctx context.Context, model *model.[Entity]) error {
+	dbs := u.master
+	tx, ok := ctx.Value(Tx).(*db.SqlxDBWrapper)
+	if ok {
+		dbs = tx
+	}
+
+	_, err := dbs.ExecContext(ctx, delete[Entity]SQL, model.ID)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (u *[Entity]Store) FindByID(ctx context.Context, id string) (*model.[Entity], error) {
+	dbs := u.slave
+	tx, ok := ctx.Value(Tx).(*db.SqlxDBWrapper)
+	if ok {
+		dbs = tx
+	}
+
+	var model []model.[Entity]
+	err := dbs.SelectContext(ctx, &model, find[Entity]SQL, id)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(model) < 1 {
+		return nil, nil
+	}
+
+	return &model[0], nil
+}
+
+func (u *[Entity]Store) FindAll(ctx context.Context) ([]*model.[Entity], error) {
+	dbs := u.slave
+	tx, ok := ctx.Value(Tx).(*db.SqlxDBWrapper)
+	if ok {
+		dbs = tx
+	}
+
+	var model []*model.[Entity]
+	err := dbs.SelectContext(ctx, model, findAll[Entity]SQL)
+	if err != nil {
+		return nil, err
+	}
+
+	return model, nil
+}

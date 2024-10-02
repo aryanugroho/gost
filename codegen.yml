@@ -1,0 +1,23 @@
+name: todo-service
+port: 8080
+infrastructure: 
+  db: 
+    type: postgres
+    host: localhost
+    port: 5432
+    user: root
+    password: root
+    database: todo
+    schema: public
+    ssl: false
+  mq: 
+    type: pubsub
+    host: localhost
+    port: 5672
+  sentry:
+    dsn: ""
+    environment: ""
+    release: ""
+entities:
+  - name: Todo
+    

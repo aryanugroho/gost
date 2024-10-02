@@ -1,0 +1,29 @@
+package usecase
+
+import (
+	"context"
+
+	"[base_project]/config"
+	"[base_project]/internal/infrastructure"
+)
+
+type App struct {
+	Infrastructure infrastructure.Infrastructure
+}
+
+type UseCase interface {
+	Create[Entity](ctx context.Context, payload *[Entity]Payload) (*[Entity]Payload, error)
+}
+
+func NewApp(ctx context.Context) (*App, error) {
+	infrastructure, err := infrastructure.NewInfra(ctx, *config.All())
+	if err != nil {
+		return nil, err
+	}
+
+	app := &App{
+		Infrastructure: infrastructure,
+	}
+
+	return app, nil
+}

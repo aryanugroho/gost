@@ -1,0 +1,21 @@
+version: "3.7"
+networks:
+  net-dev:
+    driver: bridge
+services:
+  postgres:
+    container_name: postgres
+    image: arm64v8/postgres
+    environment:
+      - POSTGRES_PASSWORD=[db_pass]
+      - POSTGRES_USER=[db_user]
+      - POSTGRES_DB=[db_name]
+    volumes:
+      - postgres_db:/var/lib/postgresql/data
+    ports:
+      - "[db_port]:5432"
+    networks:
+      - net-dev
+volumes:
+  postgres_db:
+    driver: local
