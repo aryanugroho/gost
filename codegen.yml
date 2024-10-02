@@ -1,23 +1,66 @@
-name: todo-service
-port: 8080
-infrastructure: 
-  db: 
-    type: postgres
-    host: localhost
-    port: 5432
-    user: root
-    password: root
-    database: todo
-    schema: public
+name: "example_service"
+port: "8080"
+infrastructure:
+  db:
+    type: "mysql"
+    host: "localhost"
+    port: 3306
+    user: "root"
+    password: "password"
+    database: "example_db"
+    schema: "public"
     ssl: false
-  mq: 
-    type: pubsub
-    host: localhost
+  mq:
+    type: "rabbitmq"
+    host: "localhost"
     port: 5672
-  sentry:
-    dsn: ""
-    environment: ""
-    release: ""
+sentry:
+  dsn: "http://example.com"
+  environment: "development"
+  release: "1.0.0"
+
 entities:
-  - name: Todo
+  - name: "user"
+    fields:
+      - name: "id"
+        type: "int"
+        length: 11
+        validate: "required"
+        index: true
+      - name: "name"
+        type: "string"
+        length: 255
+        validate: "required"
+      - name: "email"
+        type: "string"
+        length: 255
+        validate: "required,email"
+        index: true
+      - name: "created_at"
+        type: "time.Time"
+        validate: "required"
+        index: true
+  - name: "order"
+    fields:
+      - name: "id"
+        type: "int"
+        length: 11
+        validate: "required"
+        index: true
+      - name: "user_id"
+        type: "int"
+        length: 11
+        validate: "required"
+        index: true
+      - name: "total_price"
+        type: "decimal"
+        validate: "required"
+      - name: "status"
+        type: "string"
+        length: 50
+        validate: "required"
+      - name: "created_at"
+        type: "time.Time"
+        validate: "required"
+        index: true
     

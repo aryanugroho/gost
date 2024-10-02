@@ -32,5 +32,14 @@ type Infrastructure struct {
 	Sentry Sentry `yaml:"sentry"`
 }
 type Entities struct {
-	Name string `yaml:"name"`
+    Name   string   `yaml:"name"`
+    Fields []Field  `yaml:"fields"`
+}
+
+type Field struct {
+    Name      string  `yaml:"name"`
+    Type      string  `yaml:"type"`
+    Length    int     `yaml:"length"`
+    Validate  string  `yaml:"validate"`
+    Index     bool    `yaml:"index"`
 }
