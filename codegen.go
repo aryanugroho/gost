@@ -33,7 +33,7 @@ func main() {
 		goPath = os.Getenv("GOPATH")
 	}
 
-	codegen := loadCodegenConfig("./codegen.yml")
+	codegen := loadCodegenConfig("./codegen.yaml")
 
 	basePath := fmt.Sprint(*output, "/", codegen.Name)
 	targetDir := fmt.Sprint(goPath, "/src/", basePath)
