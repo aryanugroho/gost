@@ -1,0 +1,17 @@
+package model
+
+import "context"
+
+type [Entity] struct {
+	ID      string `db:"id"`
+	UUID    string `db:"uuid"`
+	AuditableEntity
+}
+
+type SQLStore interface {
+	Create(ctx context.Context, model *[Entity]) (*[Entity], error)
+	Update(ctx context.Context, model *[Entity]) (*[Entity], error)
+	Delete(ctx context.Context, model *[Entity]) error
+	FindByID(ctx context.Context, id string) (*[Entity], error)
+	FindAll(ctx context.Context) ([]*[Entity], error)
+}

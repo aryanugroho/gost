@@ -1,4 +1,4 @@
-app_name: "sampleapp"
+app_name: "userapp"
 port: "8080"
 infrastructure:
   db:
@@ -40,27 +40,27 @@ entities:
         type: "time.Time"
         validate: "required"
         index: true
-  - name: "order"
-    fields:
-      - name: "id"
-        type: "int"
-        length: 11
-        validate: "required"
-        index: true
-      - name: "user_id"
-        type: "int"
-        length: 11
-        validate: "required"
-        index: true
-      - name: "total_price"
-        type: "decimal"
-        validate: "required"
-      - name: "status"
-        type: "string"
-        length: 50
-        validate: "required"
-      - name: "created_at"
-        type: "time.Time"
-        validate: "required"
-        index: true
+  # - name: "order"
+  #   fields:
+  #     - name: "id"
+  #       type: "int"
+  #       length: 11
+  #       validate: "required"
+  #       index: true
+  #     - name: "user_id"
+  #       type: "int"
+  #       length: 11
+  #       validate: "required"
+  #       index: true
+  #     - name: "total_price"
+  #       type: "decimal"
+  #       validate: "required"
+  #     - name: "status"
+  #       type: "string"
+  #       length: 50
+  #       validate: "required"
+  #     - name: "created_at"
+  #       type: "time.Time"
+  #       validate: "required"
+  #       index: true
     

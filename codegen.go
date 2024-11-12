@@ -58,7 +58,7 @@ func main() {
 		//entityFieldsStr := strings.Join(entityFields, "\n")
 	}
 
-	err = walkBuildFiles(targetDir, basePath, &codegen)
+	err = walkBuildFiles(targetDir, codegen.Entities[0].Name, &codegen)
 	if err != nil {
 		log.Fatalf("error walking build files: %v", err)
 	}
@@ -79,8 +79,6 @@ func loadCodegenConfig(path string) codegen.Codegen {
 }
 
 func finalizeProject(targetDir, projectName string) {
-	copy.Copy(fmt.Sprintf("%s/cmd/server/main.go", targetDir), fmt.Sprintf("%s/cmd/%s/main.go", targetDir, projectName))
-	os.RemoveAll(fmt.Sprintf("%s/cmd/server/", targetDir))
 	exec.Command("gofmt", "-s", "-w", targetDir).Run()
 
 	exec.Command("go", "mod", "init")
@@ -162,7 +160,7 @@ func walkBuildFiles(dir, entityName string, codegen *codegen.Codegen) error {
 			fmt.Println("error encountering file:", err)
 			return err
 		}
-		if !f.IsDir() && (strings.Contains(f.Name(), ".tmpl") || strings.Contains(f.Name(), ".go")) {
+		if strings.Contains(f.Name(), ".tmpl") {
 			read, err := ioutil.ReadFile(path)
 			if err != nil {
 				fmt.Println("error reading file:", err)

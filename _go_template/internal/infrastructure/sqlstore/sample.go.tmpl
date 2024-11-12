@@ -1,0 +1,112 @@
+package sqlstore
+
+import (
+	"context"
+
+	"github.com/aryanugroho/[appName]/pkg/db"
+	"github.com/aryanugroho/[appName]/internal/model"
+)
+
+// implementation of model store
+type Store struct {
+	master *db.SqlxDBWrapper
+	slave  *db.SqlxDBWrapper
+}
+
+func NewStore(master *db.SqlxDBWrapper, slave *db.SqlxDBWrapper) *Store {
+	return &Store{
+		master: master,
+		slave:  slave,
+	}
+}
+
+func (u *Store) Create(ctx context.Context, model *model.[Entity]) (*model.[Entity], error) {
+	const createSQL  = `INSERT INTO [Entity] (uuid, created_at, updated_at) VALUES (?, ?, ?)`
+
+	dbs := u.master
+	tx, ok := ctx.Value(Tx).(*db.SqlxDBWrapper)
+	if ok {
+		dbs = tx
+	}
+
+	_, err := dbs.ExecContext(ctx, createSQL, model.UUID, model.CreatedAt, model.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+
+	return model, nil
+}
+
+func (u *Store) Update(ctx context.Context, model *model.[Entity]) (*model.[Entity], error) {
+	const updateSQL  = `UPDATE [Entity] SET uuid = ?, updated_at = ? WHERE id = ?`
+
+	dbs := u.master
+	tx, ok := ctx.Value(Tx).(*db.SqlxDBWrapper)
+	if ok {
+		dbs = tx
+	}
+
+	_, err := dbs.ExecContext(ctx, updateSQL, model.UUID,model.UpdatedAt, model.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	return model, nil
+}
+
+func (u *Store) Delete(ctx context.Context, model *model.[Entity]) error {
+	const deleteSQL  = `DELETE FROM [Entity] WHERE id = ?`
+
+	dbs := u.master
+	tx, ok := ctx.Value(Tx).(*db.SqlxDBWrapper)
+	if ok {
+		dbs = tx
+	}
+
+	_, err := dbs.ExecContext(ctx, deleteSQL, model.ID)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (u *Store) FindByID(ctx context.Context, id string) (*model.[Entity], error) {
+	findByIDSQL    = `SELECT uuid, created_at, updated_at FROM [Entity] WHERE id = ?`
+
+	dbs := u.slave
+	tx, ok := ctx.Value(Tx).(*db.SqlxDBWrapper)
+	if ok {
+		dbs = tx
+	}
+
+	var model []model.
+	err := dbs.SelectContext(ctx, &model, findByIDSQL, id)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(model) < 1 {
+		return nil, nil
+	}
+
+	return &model[0], nil
+}
+
+func (u *Store) FindAll(ctx context.Context) ([]*model.[Entity], error) {
+	const findAllSQL = `SELECT uuid, created_at, updated_at FROM [Entity] ORDER BY created_at DESC`
+
+	dbs := u.slave
+	tx, ok := ctx.Value(Tx).(*db.SqlxDBWrapper)
+	if ok {
+		dbs = tx
+	}
+
+	var model []*model.[Entity]
+	err := dbs.SelectContext(ctx, model, findAllSQL)
+	if err != nil {
+		return nil, err
+	}
+
+	return model, nil
+}
