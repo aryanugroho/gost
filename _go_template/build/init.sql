@@ -1,0 +1,8 @@
+-- create the databases
+CREATE DATABASE IF NOT EXISTS ;
+
+-- create the users for each database
+CREATE USER 'app'@'%' IDENTIFIED BY 'codev123';
+GRANT CREATE, ALTER, INDEX, LOCK TABLES, REFERENCES, UPDATE, DELETE, DROP, SELECT, INSERT ON ``.* TO 'app'@'%';
+
+FLUSH PRIVILEGES;

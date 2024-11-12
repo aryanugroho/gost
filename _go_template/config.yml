@@ -1,0 +1,41 @@
+database:
+  master:
+    driver: "postgres"
+    name: "example_db"
+    host: "localhost"
+    port: "3306"
+    user: "root"
+    password: "password"
+    maxopen: 50
+    maxidle: 10
+    maxlifetime: 3
+  slave:
+    driver: "postgres"
+    name: ""
+    host: "localhost"
+    port: "60029"
+    user: "root"
+    password: "root"
+    maxopen: 50
+    maxidle: 10
+    maxlifetime: 3
+
+app:
+  env: "local"
+  dbDebug: "true"
+  apiPrefix: ""
+  apiKey: "thisisapikey"
+
+server:
+  port: "80"
+
+gcloud:
+  projectid: 
+
+consumers:
+
+
+publishers:
+
+    
+cron:

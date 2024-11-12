@@ -1,0 +1,20 @@
+version: "3.7"
+networks:
+  net-dev:
+    driver: bridge
+services:
+  mysql:
+    container_name: mysql
+    image: arm64v8/mysql:oracle
+    command: --authentication-policy=CACHING_SHA2_PASSWORD
+    environment:
+      - MYSQL_ROOT_PASSWORD=password
+      - MYSQL_DATABASE=example_db
+    volumes:
+      - mysql-data:/var/lib/mysql
+    ports:
+      - "3306:3306"
+    networks:
+      - net-dev
+volumes:
+  mysql-data:

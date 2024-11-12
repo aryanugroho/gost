@@ -1,8 +1,8 @@
-name: "example_service"
+app_name: "sampleapp"
 port: "8080"
 infrastructure:
   db:
-    type: "mysql"
+    type: "postgres"
     host: "localhost"
     port: 3306
     user: "root"
@@ -11,7 +11,7 @@ infrastructure:
     schema: "public"
     ssl: false
   mq:
-    type: "rabbitmq"
+    type: "kafka"
     host: "localhost"
     port: 5672
 sentry:

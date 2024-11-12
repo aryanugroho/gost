@@ -4,26 +4,22 @@ import (
 	"flag"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
+	"github.com/aryanugroho/gost/codegen"
+	genstrings "github.com/aryanugroho/gost/pkg/strings"
 	"github.com/otiai10/copy"
 	"gopkg.in/yaml.v2"
 )
 
-var (
-	indexScripts  []string
-	crudMethods   []string
-	finderMethods []string
-	entityFields  []string
-)
-
 func main() {
 	output := flag.String("output", "", "project output path directory")
+	lang := flag.String("lang", "", "project language")
 	flag.Parse()
 
 	goPath := os.Getenv("GOPATH")
@@ -35,31 +31,49 @@ func main() {
 
 	codegen := loadCodegenConfig("./codegen.yaml")
 
-	basePath := fmt.Sprint(*output, "/", codegen.Name)
+	basePath := fmt.Sprintf("%s/%s", *output, codegen.AppName)
 	targetDir := fmt.Sprint(goPath, "/src/", basePath)
-	templateDir := "./_template"
+	templateDir := fmt.Sprintf("./_%s_template", *lang)
 
+	fmt.Printf("Configuration: %v\n", codegen)
+	fmt.Printf("Generating project using template: %s, into: %s\n", templateDir, targetDir)
+
+	// copy all from template as a baseline
 	err := copy.Copy(templateDir, targetDir)
 	if err != nil {
-		panic(err)
+		log.Fatalf("error copying template files: %v", err)
 	}
 
-	err = walkBuildFiles(targetDir, basePath, "", codegen)
+	// generate entity files based on the configuration
+	for _, entity := range codegen.Entities {
+		_, _, _, _ = generateEntityInfo(codegen.Entities)
+		entityName := genstrings.SnakeCaseToCamelCase(entity.Name)
+
+		// generate entity files
+		copy.Copy(fmt.Sprintf("%s/internal/usecase/[entity].go", templateDir), fmt.Sprintf("%s/internal/usecase/%s.go", targetDir, entityName))
+		copy.Copy(fmt.Sprintf("%s/internal/repository/[entity].go", templateDir), fmt.Sprintf("%s/internal/repository/%s.go", targetDir, entityName))
+		copy.Copy(fmt.Sprintf("%s/internal/delivery/http/[entity].go", templateDir), fmt.Sprintf("%s/internal/delivery/http/%s.go", targetDir, entityName))
+
+		// write entity fields to the entity file
+		//entityFieldsStr := strings.Join(entityFields, "\n")
+	}
+
+	err = walkBuildFiles(targetDir, basePath, &codegen)
 	if err != nil {
-		panic(err)
+		log.Fatalf("error walking build files: %v", err)
 	}
 
-	finalizeProject(targetDir, codegen.Name)
+	finalizeProject(targetDir, codegen.AppName)
 }
 
-func loadCodegenConfig(path string) Codegen {
-	var codegen Codegen
+func loadCodegenConfig(path string) codegen.Codegen {
+	var codegen codegen.Codegen
 	data, err := ioutil.ReadFile(path)
 	if err != nil {
-		panic(err)
+		log.Fatalf("error reading file: %v", err)
 	}
 	if err := yaml.Unmarshal(data, &codegen); err != nil {
-		panic(err)
+		log.Fatalf("error unmarshalling yaml: %v", err)
 	}
 	return codegen
 }
@@ -69,6 +83,7 @@ func finalizeProject(targetDir, projectName string) {
 	os.RemoveAll(fmt.Sprintf("%s/cmd/server/", targetDir))
 	exec.Command("gofmt", "-s", "-w", targetDir).Run()
 
+	exec.Command("go", "mod", "init")
 	cmd := exec.Command("go", "mod", "tidy")
 	cmd.Dir = targetDir
 	if _, err := cmd.Output(); err != nil {
@@ -78,7 +93,7 @@ func finalizeProject(targetDir, projectName string) {
 }
 
 // createMigrationFiles generates the migration files for the given entity
-func createMigrationFiles(entity Entities) error {
+func createMigrationFiles(entity codegen.Entities) error {
 	timestamp := time.Now().Unix()
 	migrationDir := "migrations" // Adjust as needed
 
@@ -130,12 +145,18 @@ func createMigrationFiles(entity Entities) error {
 	return nil
 }
 
-func getType(field Field) string {
-	goType := mapCustomTypeToGoType(field.Type)
+func getType(field codegen.Field) string {
+	goType := codegen.MapCustomTypeToGoType(field.Type)
 	return fmt.Sprintf("%s `json:\"%s\" validate:\"%s\"`", goType, field.Name, field.Validate)
 }
 
-func walkBuildFiles(dir, proj, entityName string, codegen Codegen) error {
+func fileRename(string) string {
+	return ""
+}
+
+func walkBuildFiles(dir, entityName string, codegen *codegen.Codegen) error {
+	// generate entity
+
 	return filepath.Walk(dir, func(path string, f os.FileInfo, err error) error {
 		if err != nil {
 			fmt.Println("error encountering file:", err)
@@ -148,67 +169,29 @@ func walkBuildFiles(dir, proj, entityName string, codegen Codegen) error {
 				return err
 			}
 
-			// Clear any previous values (important if walkBuildFiles is called multiple times)
-			indexScripts = nil
-			crudMethods = nil
-			finderMethods = nil
-			entityFields = nil
-
-			entityFields, indexScripts, finderMethods, crudMethods = generateEntityInfo(codegen.Entities)
-
-			// Process template replacements
-			rep := strings.NewReplacer(
-				"[base_project]", proj,
-				"[entity]", strings.ToLower(entityName),
-				"[Entity]", strings.Title(strings.ToLower(snakeCaseToCamelCase(entityName))),
-				"[fields]", strings.Join(entityFields, "\n"),
-				"[indexScripts]", strings.Join(indexScripts, "\n"),
-				"[finderMethods]", strings.Join(finderMethods, "\n"),
-				"[crudMethods]", strings.Join(crudMethods, "\n"),
-				"[port]", codegen.Port,
-				"[appName]", codegen.Name,
-				"[driver]", codegen.Infrastructure.Db.Type,
-				"[db_port]", strconv.Itoa(codegen.Infrastructure.Db.Port),
-				"[db_user]", codegen.Infrastructure.Db.User,
-				"[db_pass]", codegen.Infrastructure.Db.Password,
-				"[db_name]", codegen.Infrastructure.Db.Database,
-			)
-			nc := rep.Replace(string(read))
+			nc := codegen.TemplateReplaces(entityName, string(read))
 			err = ioutil.WriteFile(path, []byte(nc), 0)
 			if err != nil {
 				fmt.Println("error writing file:", err)
 				return err
 			}
 
-			rep = strings.NewReplacer(
-				"sample", strings.ToLower(entityName),
-				".go.tmpl", ".go",
-				".yml.tmpl", ".yml",
-				".mod.tmpl", ".mod",
-				".tmpl", "",
-				".gitignore.tmpl", ".gitignore",
-				".sql.tmpl", ".sql",
-			)
-			nn := rep.Replace(path)
+			nn := codegen.FileReplaces(entityName, path)
 			err = os.Rename(path, nn)
 			if err != nil {
 				fmt.Println("error renaming file:", err)
 				return err
-			}
-
-			// Create migration files for each entity
-			for _, entity := range codegen.Entities {
-				err := createMigrationFiles(entity)
-				if err != nil {
-					fmt.Printf("Error creating migration files for entity %s: %v\n", entity.Name, err)
-				}
 			}
 		}
 		return nil
 	})
 }
 
-func generateEntityInfo(entities []Entities) (entityFields, indexScripts, finderMethods, crudMethods []string) {
+func generateEntityInfo(entities []codegen.Entities) ([]string, []string, []string, []string) {
+	var sqlIndexScripts []string
+	var finderMethods []string
+	var crudMethods []string
+	var entityFields []string
 	for _, entity := range entities {
 		for _, field := range entity.Fields {
 			field.Type = getType(field)
@@ -219,43 +202,11 @@ func generateEntityInfo(entities []Entities) (entityFields, indexScripts, finder
 			if field.Index {
 				// Generate index logic
 				indexLogic := fmt.Sprintf("CREATE INDEX idx_%s_%s ON %s (%s);", entity.Name, field.Name, strings.ToLower(entity.Name), field.Name)
-				indexScripts = append(indexScripts, indexLogic)
+				sqlIndexScripts = append(sqlIndexScripts, indexLogic)
+				finderMethods = append(finderMethods, "FindBy"+field.Name)
 			}
-			// Generate finder methods
-			finderMethod := fmt.Sprintf("func Find%sBy%s(%s %s) (*%s, error) { \n // finder logic here... \n}", entity.Name, strings.Title(field.Name), field.Name, field.Type, entity.Name)
-			finderMethods = append(finderMethods, finderMethod)
-		}
 
-		// Generate CRUD logic
-		crudCreate := fmt.Sprintf("func Create%s(entity *%s) error { \n // create logic here... \n}", entity.Name, entity.Name)
-		crudRead := fmt.Sprintf("func Get%sByID(id int) (*%s, error) { \n // read logic here... \n}", entity.Name, entity.Name)
-		crudUpdate := fmt.Sprintf("func Update%s(entity *%s) error { \n // update logic here... \n}", entity.Name, entity.Name)
-		crudDelete := fmt.Sprintf("func Delete%sByID(id int) error { \n // delete logic here... \n}", entity.Name)
-
-		crudMethods = append(crudMethods, crudCreate, crudRead, crudUpdate, crudDelete)
-	}
-	return
-}
-
-func snakeCaseToCamelCase(inputUnderScoreStr string) (camelCase string) {
-	isToUpper := false
-
-	for k, v := range inputUnderScoreStr {
-		if k == 0 {
-			camelCase = strings.ToUpper(string(inputUnderScoreStr[0]))
-		} else {
-			if isToUpper {
-				camelCase += strings.ToUpper(string(v))
-				isToUpper = false
-			} else {
-				if v == '_' {
-					isToUpper = true
-				} else {
-					camelCase += string(v)
-				}
-			}
 		}
 	}
-	return
-
+	return entityFields, sqlIndexScripts, finderMethods, crudMethods
 }

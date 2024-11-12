@@ -1,5 +1,0 @@
-app:
-  env: "test"
-  dbDebug: true
-  apiPrefix: "fraud"
-  apiKey: ""

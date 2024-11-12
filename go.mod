@@ -1,14 +1,13 @@
-module gitlab.com/flip-id/default/service-template
+module github.com/aryanugroho/gost
 
-go 1.17
+go 1.23.2
 
 require (
-	github.com/go-yaml/yaml v2.1.0+incompatible
-	github.com/otiai10/copy v1.9.0
+	github.com/otiai10/copy v1.14.0
+	gopkg.in/yaml.v2 v2.4.0
 )
 
 require (
-	golang.org/x/sys v0.4.0 // indirect
-	gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405 // indirect
-	gopkg.in/yaml.v2 v2.4.0 // indirect
+	golang.org/x/sync v0.3.0 // indirect
+	golang.org/x/sys v0.0.0-20220715151400-c0bba94af5f8 // indirect
 )

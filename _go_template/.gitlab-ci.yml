@@ -1,0 +1,386 @@
+.codeception_base:
+  - &environment
+    - export DEBIAN_FRONTEND=noninteractive
+    - export DB_NAME="${DB_NAME}"
+    - export DATABASE_MASTER_USER="${DATABASE_MASTER_USER}"
+    - export DATABASE_MASTER_PASSWORD="${DATABASE_MASTER_PASSWORD}"
+    - export DATABASE_MASTER_MAXOPEN="${DATABASE_MASTER_MAXOPEN}"
+    - export DATABASE_MASTER_MAXIDLE="${DATABASE_MASTER_MAXIDLE}"
+    - export DATABASE_MASTER_MAXLIFETIME="${DATABASE_MASTER_MAXLIFETIME}"
+    - export DB_HOST="${DB_HOST}"
+    - export DB_PORT="${DB_PORT}"
+    - export APP_APIKEY="${APP_APIKEY}"
+    - export PUBSUB_PROJECT_ID="${PUBSUB_PROJECT_ID}"
+    - export TAG_NAME="v-$(date -I)-$CI_PIPELINE_ID-$CI_COMMIT_SHORT_SHA"
+    - export DATADOG_API_KEY="${DD_API_KEY}"
+    - export DOCKER_TAG="${CI_COMMIT_SHORT_SHA}"
+    - export GCLOUD_PROJECTID="${GCLOUD_PROJECTID}"
+    - export DATABASE_SLAVE_USER="${DATABASE_SLAVE_USER}"
+    - export DATABASE_SLAVE_PASSWORD="${DATABASE_SLAVE_PASSWORD}"
+    - export DATABASE_SLAVE_MAXOPEN="${DATABASE_SLAVE_MAXOPEN}"
+    - export DATABASE_SLAVE_MAXIDLE="${DATABASE_SLAVE_MAXIDLE}"
+    - export DATABASE_SLAVE_MAXLIFETIME="${DATABASE_SLAVE_MAXLIFETIME}"
+  - &ssh_setup
+    - 'which ssh-agent || apk add openssh-client'
+    # run ssh-agent
+    - eval $(ssh-agent -s)
+    # add the SSH key stored in SSH_PRIVATE_KEY
+    - echo "$SSH_PRIVATE_KEY" | ssh-add -
+    # for Docker builds disable host key checking
+    - mkdir -p ~/.ssh
+    - 'echo -e "Host *\n\tStrictHostKeyChecking no\n\n" > ~/.ssh/config'
+    - cat ~/.ssh/config
+    - ssh-add -l
+  - &setup_dependencies
+    - apk update
+    - apk add git build-base gettext busybox-extras make
+    - git config --global url."git@gitlab.com:".insteadOf "https://gitlab.com/"
+    - go env -w GOPRIVATE=gitlab.com/flip-id
+    - export GOPRIVATE=gitlab.com/flip-id
+    - GOARM=7 GOOS=linux GOARCH=amd64
+
+.docker_base:
+  variables:
+    # workaround, fix later https://gitlab.com/gitlab-org/gitlab-runner/-/issues/4501
+    DOCKER_DRIVER: overlay2
+    DOCKER_TLS_CERTDIR: ""
+    DOCKER_HOST: tcp://localhost:2375
+
+variables:
+  # Configure mysql environment variables (https://hub.docker.com/_/mysql/)
+  MYSQL_ROOT_PASSWORD: "$DB_PASSWORD"
+  KUSTOMIZE_VERSION: v4.1.2
+  DD_API_KEY: $DD_API_KEY
+  DATADOG_API_KEY: $DD_API_KEY
+  DD_INSIDE_CI: "true"
+  DD_HOSTNAME: "none"
+  DD_AGENT_HOST: "datadog-agent"
+
+stages:
+  - build
+  - package
+  - deploy-dev
+  - argocd-sync-dev
+  - deploy-staging
+  - argocd-sync-staging
+  - predeploy-production
+  - deploy-production
+  - argocd-sync-production
+
+#unit-test:
+#  image: asia-southeast2-docker.pkg.dev/flip-prod-sre-e490/flip-main/golang:1.16-alpine
+#  stage: test
+#  before_script:
+#    - *ssh_setup
+#    - *setup_dependencies
+#  script:
+#    - go mod download
+#    - make test
+#  artifacts:
+#    when: always
+#    reports:
+#      junit: report.xml
+
+build_and_test:
+  stage: build
+  before_script:
+    - *ssh_setup
+    - *setup_dependencies
+  image: asia-southeast2-docker.pkg.dev/flip-prod-sre-e490/flip-main/golang:1.16-alpine
+  script:
+    - go mod download
+    - go test -failfast ./...
+    - go build -o  cmd//main.go
+  artifacts:
+    paths:
+      - 
+  tags:
+    - gcp-staging
+  except:
+    - tags
+
+docker_build:
+  image: asia-southeast2-docker.pkg.dev/flip-prod-sre-e490/flip-main/docker:18.09.7
+  stage: package
+  tags:
+    - gcp-staging
+  needs:
+    - build_and_test
+  extends: .docker_base
+  services:
+    - asia-southeast2-docker.pkg.dev/flip-prod-sre-e490/flip-main/docker:18.09.7-dind
+  before_script:
+    - export DOCKER_TAG="${CI_COMMIT_SHORT_SHA}"
+    - export CONTAINER_BASE_IMAGE="asia-southeast2-docker.pkg.dev/flip-prod-sre-e490/flip-main/"
+    - export DEBIAN_FRONTEND=noninteractive
+    - mkdir -p $HOME/.docker
+    - echo $DOCKER_AUTH_CONFIG > $HOME/.docker/config.json
+    - cat $HOME/.docker/config.json
+  script:
+    - base64 -d $ARTIFACT_REGISTRY_SA_KEY | docker login -u _json_key --password-stdin https://asia-southeast2-docker.pkg.dev
+    - docker info
+    - docker build . -f Dockerfile. -t ${CONTAINER_BASE_IMAGE}:${DOCKER_TAG}
+    - docker push $CONTAINER_BASE_IMAGE
+  except:
+    - tags
+
+run_migrations_dev:
+  image: asia-southeast2-docker.pkg.dev/flip-prod-sre-e490/flip-main/golang:1.17.alpine-datadog
+  stage: deploy-dev
+  environment: dev/migrate
+  needs:
+    - build_and_test
+  tags:
+    - gcp-dev
+  when: manual
+  before_script:
+    - *ssh_setup
+    - *environment
+    - *setup_dependencies
+  script:
+    - envsubst < config-dev.yml.tmpl > config.yml
+    - go mod download
+    - go run cmd//main.go migrate:run
+  except:
+    - main
+    - tags
+
+code_push_to_gitops_dev:
+  image: asia-southeast2-docker.pkg.dev/flip-prod-sre-e490/flip-main/k8s-deploy:v1.0.2
+  stage: deploy-dev
+  tags:
+    - gcp-staging
+  needs:
+    - docker_build
+  environment: dev/deploy
+  when: manual
+  before_script:
+    - *environment
+    - *ssh_setup
+    - git config --global user.email "sre@flip.id"
+    - git config --global user.name "SRE Deployer"
+  script:
+    - apt-get update && apt-get install gettext -y
+    - |
+      if [ ! -f kustomize ] ; then \
+        curl -LO "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize/${KUSTOMIZE_VERSION}/kustomize_${KUSTOMIZE_VERSION}_linux_amd64.tar.gz"
+        tar -xvf kustomize_${KUSTOMIZE_VERSION}_linux_amd64.tar.gz
+      fi;
+    - cp kustomize /usr/bin/kustomize
+    # Substitute the env and deploy
+    - envsubst < version.env > .version.env && rm version.env && mv .version.env version.env
+    - git clone git@gitlab.com:flip-id/gitops-.git
+    - cp version.env gitops-/kubernetes/main/overlays/dev/
+    - cp version.env gitops-/kubernetes/listener/overlays/dev/
+    - cp version.env gitops-/kubernetes/cron/overlays/dev/
+    - cd gitops-/kubernetes/main/overlays/dev/
+    - kustomize edit set image asia-southeast2-docker.pkg.dev/flip-prod-sre-e490/flip-main/:${DOCKER_TAG}
+    - cd ../../../../kubernetes/listener/overlays/dev/
+    - kustomize edit set image asia-southeast2-docker.pkg.dev/flip-prod-sre-e490/flip-main/-listener:${DOCKER_TAG}
+    - cd ../../../../kubernetes/cron/overlays/dev/
+    - kustomize edit set image asia-southeast2-docker.pkg.dev/flip-prod-sre-e490/flip-main/-cron:${DOCKER_TAG}
+    - cd ../../../../
+    - git add .
+    - git commit -m "Update :${DOCKER_TAG}, -listener:${DOCKER_TAG}, -cron:${DOCKER_TAG}"
+    - git push
+  except:
+    - main
+    - tags
+
+argocd_sync_dev:
+  image: asia-southeast2-docker.pkg.dev/flip-prod-sre-e490/flip-main/k8s-deploy:v1.0.2
+  stage: argocd-sync-dev
+  environment: dev/main
+  tags:
+    - gcp-staging
+  needs:
+    - code_push_to_gitops_dev
+  script:
+    - export ARGOCD_SERVER=argocd-dev.flip.id
+    - curl -sSL -o /usr/bin/argocd https://${ARGOCD_SERVER}/download/argocd-linux-amd64
+    - export ARGOCD_AUTH_TOKEN="${ARGOCD_AUTH_TOKEN_DEV}"
+    - chmod +x /usr/bin/argocd
+    - argocd app sync  --prune || true
+    - argocd app wait  || true
+  except:
+    - main
+    - tags
+
+
+### Staging ###
+
+run_migrations_staging:
+  image: asia-southeast2-docker.pkg.dev/flip-prod-sre-e490/flip-main/golang:1.17.alpine-datadog
+  stage: deploy-staging
+  needs:
+    - build_and_test
+  tags:
+    - gcp-staging
+  environment: staging/migrate
+  before_script:
+    - *environment
+    - *ssh_setup
+    - *setup_dependencies
+  script:
+    - envsubst < config-stg.yml.tmpl > config.yml
+    - go mod download
+    - go run cmd//main.go migrate:run
+  only:
+    - main
+
+code_push_to_gitops_staging:
+  image: asia-southeast2-docker.pkg.dev/flip-prod-sre-e490/flip-main/k8s-deploy:v1.0.2
+  stage: deploy-staging
+  environment: staging/deploy
+  tags:
+    - gcp-staging
+  before_script:
+    - *environment
+    - *ssh_setup
+    - git config --global user.email "sre@flip.id"
+    - git config --global user.name "SRE Deployer"
+  script:
+    - apt-get update && apt-get install gettext -y
+    - |
+      if [ ! -f kustomize ] ; then \
+        curl -LO "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize/${KUSTOMIZE_VERSION}/kustomize_${KUSTOMIZE_VERSION}_linux_amd64.tar.gz"
+        tar -xvf kustomize_${KUSTOMIZE_VERSION}_linux_amd64.tar.gz
+      fi;
+    - cp kustomize /usr/bin/kustomize
+    # Substitute the env and deploy
+    - envsubst < version.env > .version.env && rm version.env && mv .version.env version.env
+    - git clone git@gitlab.com:flip-id/gitops-.git
+    - cp version.env gitops-/kubernetes/main/overlays/staging/
+    - cp version.env gitops-/kubernetes/listener/overlays/staging/
+    - cd gitops-/kubernetes/main/overlays/staging/
+    - kustomize edit set image asia-southeast2-docker.pkg.dev/flip-prod-sre-e490/flip-main/:${DOCKER_TAG}
+    - cd ../../../../kubernetes/listener/overlays/staging/
+    - kustomize edit set image asia-southeast2-docker.pkg.dev/flip-prod-sre-e490/flip-main/-listener:${DOCKER_TAG}
+    - cd ../../../../kubernetes/cron/overlays/staging/
+    - kustomize edit set image asia-southeast2-docker.pkg.dev/flip-prod-sre-e490/flip-main/-cron:${DOCKER_TAG}
+    - cd ../../../../
+    - git add .
+    - git commit -m "Update :${DOCKER_TAG}, -listener:${DOCKER_TAG}, -cron:${DOCKER_TAG}"
+    - git push
+  only:
+    - main
+
+argocd_sync_staging:
+  image: asia-southeast2-docker.pkg.dev/flip-prod-sre-e490/flip-main/k8s-deploy:v1.0.2
+  stage: argocd-sync-staging
+  needs:
+    - code_push_to_gitops_staging
+  tags:
+    - gcp-staging
+  environment: staging/main
+  script:
+    - export ARGOCD_SERVER=argocd-staging.flip.id
+    - curl -sSL -o /usr/bin/argocd https://${ARGOCD_SERVER}/download/argocd-linux-amd64
+    - export ARGOCD_AUTH_TOKEN="${ARGOCD_AUTH_TOKEN_STAGING}"
+    - chmod +x /usr/bin/argocd
+    - argocd app sync  --prune || true
+    - argocd app wait  || true
+  only:
+    - main
+
+build_tag:
+  image: registry-intl.ap-southeast-5.aliyuncs.com/flip-default/k8s-deploy:v1.0.2
+  stage: predeploy-production
+  tags:
+    - gcp-staging
+  script:
+    - export TAG_NAME="v-$(date -I)-$CI_PIPELINE_ID-$CI_COMMIT_SHORT_SHA"
+    - curl -X POST --silent --show-error --fail "https://gitlab.com/api/v4/projects/${CI_PROJECT_ID}/repository/tags?tag_name=${TAG_NAME}&ref=${CI_COMMIT_SHA}&private_token=${GIT_TOKEN_PERSONAL}"
+  only:
+    - main
+  when: manual
+
+build_image_tag:
+  image: asia-southeast2-docker.pkg.dev/flip-prod-sre-e490/flip-main/docker:18.09.7
+  stage: predeploy-production
+  extends: .docker_base
+  tags:
+    - gcp-staging
+  needs:
+    - docker_build
+  services:
+    - asia-southeast2-docker.pkg.dev/flip-prod-sre-e490/flip-main/docker:18.09.7-dind
+  before_script:
+    - export DOCKER_TAG="${CI_COMMIT_SHORT_SHA}"
+    - export CONTAINER_BASE_IMAGE="asia-southeast2-docker.pkg.dev/flip-prod-sre-e490/flip-main/"
+    - export DEBIAN_FRONTEND=noninteractive
+    - mkdir -p $HOME/.docker
+    - echo $DOCKER_AUTH_CONFIG > $HOME/.docker/config.json
+    - cat $HOME/.docker/config.json
+    - export TAG_NAME="v-$(date -I)-$CI_PIPELINE_ID-$CI_COMMIT_SHORT_SHA"
+  script:
+    - base64 -d $ARTIFACT_REGISTRY_SA_KEY | docker login -u _json_key --password-stdin https://asia-southeast2-docker.pkg.dev
+    - docker info
+    - docker pull ${CONTAINER_BASE_IMAGE}:${DOCKER_TAG}
+    - docker tag ${CONTAINER_BASE_IMAGE}:${DOCKER_TAG} ${CONTAINER_BASE_IMAGE}:${TAG_NAME}
+    - docker push ${CONTAINER_BASE_IMAGE}:${TAG_NAME}
+  only:
+    - main
+  when: manual
+
+### Production ###
+
+run_migrations_production:
+  image: asia-southeast2-docker.pkg.dev/flip-prod-sre-e490/flip-main/golang:1.17.alpine-datadog
+  stage: deploy-production
+  environment: production/migrate
+  needs:
+    - build_image_tag
+  tags:
+    - gcp-production
+  before_script:
+    - *environment
+    - *ssh_setup
+    - *setup_dependencies
+  script:
+    - envsubst < config.yml.tmpl > config.yml
+    - go mod download
+    - go run cmd//main.go migrate:run
+  only:
+    - main
+  when: manual
+
+code_push_to_gitops_production:
+  image: asia-southeast2-docker.pkg.dev/flip-prod-sre-e490/flip-main/k8s-deploy:v1.0.2
+  stage: deploy-production
+  needs:
+    - build_image_tag
+  environment: production/deploy
+  tags:
+    - gcp-production
+  before_script:
+    - *environment
+    - *ssh_setup
+    - git config --global user.email "sre@flip.id"
+    - git config --global user.name "SRE Deployer"
+  script:
+    - apt-get update && apt-get install gettext -y
+    - |
+      if [ ! -f kustomize ] ; then \
+        curl -LO "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize/${KUSTOMIZE_VERSION}/kustomize_${KUSTOMIZE_VERSION}_linux_amd64.tar.gz"
+        tar -xvf kustomize_${KUSTOMIZE_VERSION}_linux_amd64.tar.gz
+      fi;
+    - cp kustomize /usr/bin/kustomize
+    # Substitute the env and deploy
+    - envsubst < version.env > .version.env && rm version.env && mv .version.env version.env
+    - git clone git@gitlab.com:flip-id/gitops-.git
+    - cp version.env gitops-/kubernetes/main/overlays/production/
+    - cd gitops-/kubernetes/main/overlays/production/
+    - kustomize edit set image asia-southeast2-docker.pkg.dev/flip-prod-sre-e490/flip-main/:${TAG_NAME}
+    - cd ../../../../kubernetes/listener/overlays/production/
+    - kustomize edit set image asia-southeast2-docker.pkg.dev/flip-prod-sre-e490/flip-main/-listener:${DOCKER_TAG}
+    - cd ../../../../kubernetes/cron/overlays/production/
+    - kustomize edit set image asia-southeast2-docker.pkg.dev/flip-prod-sre-e490/flip-main/-cron:${DOCKER_TAG}
+
+    - cd ../../../../
+    - git add .
+    - git commit -m "Update :${TAG_NAME}"
+    - git push
+  only:
+    - main
+  when: manual
